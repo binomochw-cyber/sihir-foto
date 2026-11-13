@@ -33,7 +33,10 @@ TIME_BUDGET = int(os.environ.get("TIME_BUDGET_SN", "") or 25 * 60)      # bir tu
 REMBG_MODEL = os.environ.get("REMBG_MODEL", "").strip() or "birefnet-general-lite"
 OUT = 1200                # çıktı: 1200×1200 kare
 PAD = 0.06                # kenar boşluğu (her yandan)
-MIN_IOU = 0.85            # yapay zekâ sonucu orijinale bu kadar benzemiyorsa kullanılmaz
+MIN_IOU = 0.85            # (yazı koruma açıkken) yapay zekâ sonucu orijinale bu kadar benzemiyorsa kullanılmaz
+# Yazı koruma: 1 = ürünün pikselleri orijinalden gelir (yazılar bozulmaz ama sonuç orijinale çok benzer)
+#              0 = yapay zekânın ürettiği görüntü OLDUĞU GİBİ kullanılır (daha "stüdyo" görünür, yazılar değişebilir)
+KEEP_TEXT = (os.environ.get("KEEP_TEXT", "").strip() or "0") == "1"
 
 PROMPT = (
     "Turn this into a professional e-commerce studio product photo of this exact same product. "
@@ -380,7 +383,23 @@ def process(rgb, use_ai, last_try):
     bg = bg_mean(rgb, A)
     rgb = decontaminate(rgb, A, bg)
 
-    if use_ai:
+    if use_ai and not KEEP_TEXT:
+        # yapay zekânın ürettiği görüntü doğrudan: sadece beyaz zemine ortalanır
+        try:
+            ai = cf_edit(rgb)
+        except QuotaError:
+            raise
+        except Exception as e:
+            if not last_try:
+                raise
+            notes.append(f"Yapay zekâ çalışmadı ({str(e)[:80]}), kendi düzeltmemiz kullanıldı")
+        else:
+            Aa, _ = clean_mask(mask_of(ai))
+            if not qc(Aa):
+                notes.append("Yapay zekâ ile yeniden oluşturuldu")
+                return compose(ai, Aa), notes
+            notes.append("Yapay zekâ sonucu ayrılamadı, kendi düzeltmemiz kullanıldı")
+    elif use_ai:
         try:
             ai = cf_edit(rgb)
             Aa, _ = clean_mask(mask_of(ai))
@@ -415,7 +434,8 @@ def main():
         print("APPS_SCRIPT_URL ve FOTO_KEY gizli anahtarları girilmemiş.")
         sys.exit(1)
     use_ai = bool(CF_URL and CF_SIFRE)
-    print("Yapay zekâ (Cloudflare):", "açık" if use_ai else "kapalı (CF_URL / CF_SIFRE yok)")
+    print("Yapay zekâ (Cloudflare):", "AÇIK" if use_ai else "KAPALI (CF_URL / CF_SIFRE gizli anahtarları boş)",
+          "· yazı koruma:", "açık" if KEEP_TEXT else "kapalı (yapay zekâ görüntüsü olduğu gibi)")
     t0 = time.time()
     q = api("fotoQueue", limit=MAX_PER_RUN)
     if not q.get("ok"):
