@@ -1,0 +1,62 @@
+name: Otomatik ürün fotoğrafı
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: foto
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  foto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+      FOTO_KEY: ${{ secrets.FOTO_KEY }}
+      CF_URL: ${{ secrets.CF_URL }}
+      CF_SIFRE: ${{ secrets.CF_SIFRE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kuyrukta fotoğraf var mı?
+        id: kuyruk
+        run: python3 kuyruk.py
+
+      - uses: actions/setup-python@v5
+        if: steps.kuyruk.outputs.bekleyen != '0'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Kurulum
+        if: steps.kuyruk.outputs.bekleyen != '0'
+        run: pip install -r requirements.txt
+
+      - name: Yapay zekâ modelini önbellekten al
+        if: steps.kuyruk.outputs.bekleyen != '0'
+        uses: actions/cache@v4
+        with:
+          path: ~/.u2net
+          key: rembg-modeller-v1
+
+      - name: Fotoğrafları işle
+        if: steps.kuyruk.outputs.bekleyen != '0'
+        run: python foto.py
+
+      - name: Canlı tut
+        if: always()
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          if [ $(( (now - last) / 86400 )) -ge 50 ]; then
+            git config user.name "foto-bot"
+            git config user.email "foto-bot@users.noreply.github.com"
+            git commit --allow-empty -m "Canlı tut"
+            git push
+          fi
